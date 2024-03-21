@@ -1,0 +1,534 @@
+[Python] Djangoで注文アプリケーションを作る（inline-formsets 使用方法）
+Python
+Django
+最終更新日 2018年04月26日
+投稿日 2018年04月25日
+この記事について
+前回の[Python] Djangoチュートリアル - 汎用業務Webアプリを最速で作るの続きとして、もう少し複雑な入力フォームを作るサンプルを用意しました。
+
+Djangoの標準機能に、親子関係を持つデータモデルを登録させる「inline-formsets」という仕組みがあります。これを使うと見積書や注文票のような見出しと明細行を持つ入力フォームを作れるので、より実用的な業務アプリケーションが作れます。
+
+サンプルとして注文アプリを作りました。こちらを元にinline-formsetsを使ったアプリケーションの作成方法を説明します。
+
+なお、この記事は以下のサンプルコードをもとに作成しました。
+[epicserve:Django Inline Formset Example]
+https://github.com/epicserve/inlineformset-example
+
+この記事で作るもの
+注文アプリケーション
+
+画面イメージ
+
+image.png
+
+サンプルコード
+Github:
+https://github.com/okoppe8/Django-Inline-Formset-Example
+
+Githubよりダウンロード後、以下のコマンドを順に実行してください。
+※Windows用（Macでは適切に読み替えてください。）
+
+python -m venv env
+env\Scripts\activate
+pip install -r requirements.txt
+manage.py migrate
+manage.py createsuperuser 
+manage.py runserver
+manage.py loaddata fixture/item.json
+画面上部にユーザー名を表示するので、ユーザー管理画面で姓名の登録をしてください。
+
+アプリケーションの作成
+アプリケーションの構造は、データモデルの変更にかかる部分を除いて前回とほぼ同じです。前回との差分についてのみ説明します。
+
+手順１．プロジェクト作成
+前回分
+
+基本的に前回のプロジェクトと同じです。
+内容に合わせてアプリ名、画面名を「app」から「invoice」に変更しました。
+
+手順２．設定ファイル編集
+前回分
+
+project/setting.py
+
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'django.contrib.humanize',  # ★追加
+    'django_filters',
+    'pure_pagination', 
+    'bootstrap4', # ★cripy_formsから変更
+    'invoice',
+]
+
+・django.contrib.humanize
+
+テンプレートで金額表示を３桁コンマ区切りにするために必要な設定です。テンプレートで「{{ value|intcomma:False }} 円」とすると数字が３桁区切りになります。
+※ 英語(en)以外の環境ではFalseが必要なので注意。
+
+参考：django templateで金額を表示（数値を三桁ずつ区切る）
+
+・django-bootstrap4
+
+今回はbootstrap出力に「django-crispy-forms」ではなく「django-bootstrap4」を使いました。django-crispy-formsと比べて、パーツごとに細かい修正を入れて出力する機能が優れています。こちらの方が使い勝手がよさそうです。
+
+公式：https://github.com/zostera/django-bootstrap4
+
+手順３．モデル作成
+前回分
+
+標準的な金額明細書に最低限必要な項目を作りました。
+商品の単価の変更に対応できるように、明細行に登録時点の単価を保存しています。
+
+invoice/models.py
+
+from django.contrib.auth.models import User
+from django.core import validators
+from django.db import models
+from django.urls import reverse
+
+
+class Item(models.Model):
+    name = models.CharField(
+        verbose_name='名前',
+        max_length=100,
+    )
+
+    unit_price = models.IntegerField(
+        verbose_name='単価',
+        validators=[validators.MinValueValidator(0)],
+    )
+
+    order = models.IntegerField(
+        verbose_name='並び順',
+        validators=[validators.MinValueValidator(0)],
+    )
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = 'メニュー'
+        verbose_name_plural = 'メニュー'
+
+
+class Invoice(models.Model):
+    customer = models.CharField(
+        verbose_name='顧客名',
+        max_length=100,
+    )
+
+    sub_total = models.IntegerField(
+        verbose_name='小計',
+    )
+
+    tax = models.IntegerField(
+        verbose_name='消費税',
+    )
+
+    total_amount = models.IntegerField(
+        verbose_name='合計金額',
+    )
+
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='作成者',
+    )
+
+    created_at = models.DateTimeField(
+        verbose_name='登録日',
+        auto_now_add=True
+    )
+
+    def __str__(self):
+        return self.customer
+
+    class Meta:
+        verbose_name = '注文'
+        verbose_name_plural = '注文'
+
+    def get_absolute_url(self):
+        return reverse('detail', args=[str(self.id)])
+
+
+class InvoiceDetail(models.Model):
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE)
+
+    item = models.ForeignKey(
+        Item,
+        verbose_name='商品',
+        on_delete=models.CASCADE,
+    )
+
+    unit_price = models.IntegerField(
+        verbose_name='単価',
+        validators=[validators.MinValueValidator(0)],
+    )
+
+    quantity = models.IntegerField(
+        verbose_name='数量',
+        validators=[validators.MinValueValidator(0)],
+    )
+
+    amount = models.IntegerField(
+        verbose_name='金額',
+    )
+
+手順４．データベース作成
+前回分
+
+特別な点は無いので省略します。
+
+手順５．管理サイト設定
+前回分
+
+商品マスタについては一覧画面で編集できるようにしました。
+
+localhost_8000_admin_invoice_item_(iPad).png
+
+管理画面でもinlinesの設定をすることで親子関係のデータを直接編集可能です。
+詳しい解説については以下のページを参考にしてください。
+
+参考：naritoブログ Django、インラインフォームセットをビューから使う
+https://torina.top/detail/432/
+
+localhost_8000_admin_invoice_invoice_1_change_(iPad).png
+
+admin.py
+@admin.register(Item)
+class ItemAdmin(admin.ModelAdmin):
+
+    list_display = ('name', 'unit_price', 'order',)
+    list_editable = ('unit_price', 'order',)
+    ordering = ('order',)
+
+
+class InvoiceDetailInline(admin.TabularInline):
+    model = InvoiceDetail
+    extra = 0
+
+
+@admin.register(Invoice)
+class InvoiceAdmin(admin.ModelAdmin):
+    inlines = [InvoiceDetailInline]
+
+手順６．フォーム作成
+前回分
+
+invoice/forms.py
+from django import forms
+from django.forms.models import inlineformset_factory
+from django.forms.widgets import Select
+
+from .models import Item, Invoice, InvoiceDetail
+
+
+class InvoiceForm(forms.ModelForm):
+    class Meta:
+        model = Invoice
+        fields = ('customer',)
+
+
+class InvoiceDetailForm(forms.ModelForm):
+    class Meta:
+        model = InvoiceDetail
+        fields = ('item', 'quantity',)
+
+    def __init__(self, *args, **kwargs):
+        super(InvoiceDetailForm, self).__init__(*args, **kwargs)
+
+        self.fields['item'].choices = lambda: [('', '-- 商品 --')] + [
+            (item.id, '%s %s円' % (item.name.ljust(10, '　'), item.unit_price)) for item in
+            Item.objects.order_by('order')]
+
+        choices_number = [('', '-- 個数 --')] + [(str(i), str(i)) for i in range(1, 10)]
+        self.fields['quantity'].widget = Select(choices=choices_number)
+
+
+InvoiceDetailFormSet = inlineformset_factory(
+    parent_model=Invoice,
+    model=InvoiceDetail,
+    form=InvoiceDetailForm,
+    extra=1,
+    min_num=1,
+    validate_min=True,
+)
+
+inline-formsetsの定義では、静的メソッドinlineformset_factoryに親モデル、子モデル（親フォーム、子フォームでも可）を指定します。
+inline-formsetsを登録画面に表示させると、明細入力欄として「1 + extra」行の空欄が表示されます。min_numと「validate_min=True」と同時に設定すると、入力が必要な最低行数のチェックがおこなれます。
+
+参考：Django 公式 Inline formsets
+
+今回は作成しませんでしたが、FormSetに行をまたがったバリデーション、例えば「同じアイテムを登録させない」「合計が一定金額を超えない」という制限を設定することができます。
+
+子モデルを元としたformsetクラスを作成し、追加バリデーションを行うcleanメソッドを定義します。具体的な方法は以下のページが参考になります。
+
+参考：[Misc Notes] DjangoのFormSetで各フォームをまたがったバリデーションを行う
+
+手順７．フィルタ作成
+前回分
+
+前回と同じなので省略します。
+
+手順８．ビュー作成
+前回分
+
+FormsetMixin について
+inline-formsetsには対応するClass-Based-Viewが用意されていません。
+CreateView、UpdateViewを自分で拡張して登録更新処理を作ります。
+
+処理方法には様々なアプローチがありますが、今回はこちらのサンプルコードで使っているFormsetMixinをそのまま流用します。このコードの利点は処理の流れがわかりやすく、最終登録処理のform_validをオーバーライドすることで自由度の高いカスタマイズができることです。
+
+引用：https://github.com/epicserve/inlineformset-example/blob/master/books/templates/books/author_and_books_form.html
+
+invoice/views.py
+
+class FormsetMixin(object):
+    object = None
+
+    def get(self, request, *args, **kwargs):
+        if getattr(self, 'is_update_view', False):
+            self.object = self.get_object()
+        form_class = self.get_form_class()
+        form = self.get_form(form_class)
+        formset_class = self.get_formset_class()
+        formset = self.get_formset(formset_class)
+        return self.render_to_response(self.get_context_data(form=form, formset=formset))
+
+    def post(self, request, *args, **kwargs):
+        if getattr(self, 'is_update_view', False):
+            self.object = self.get_object()
+        form_class = self.get_form_class()
+        form = self.get_form(form_class)
+        formset_class = self.get_formset_class()
+        formset = self.get_formset(formset_class)
+        if form.is_valid() and formset.is_valid():
+            return self.form_valid(form, formset)
+        else:
+            return self.form_invalid(form, formset)
+
+    def get_formset_class(self):
+        return self.formset_class
+
+    def get_formset(self, formset_class):
+        return formset_class(**self.get_formset_kwargs())
+
+    def get_formset_kwargs(self):
+        kwargs = {
+            'instance': self.object
+        }
+        if self.request.method in ('POST', 'PUT'):
+            kwargs.update({
+                'data': self.request.POST,
+                'files': self.request.FILES,
+            })
+        return kwargs
+
+    def form_valid(self, form, formset):
+        self.object = form.save()
+        formset.instance = self.object
+        formset.save()
+        return redirect(self.object.get_absolute_url())
+
+    def form_invalid(self, form, formset):
+        return self.render_to_response(self.get_context_data(form=form, formset=formset))
+
+
+ちなみに登録処理のカスタマイズが必要ないなら、以下のアプローチの方が簡潔に済みます。
+
+Django: formset を form に埋め込む
+
+新規登録・更新処理
+invoice/views.py
+
+
+class InvoiceMixin(object):
+    def form_valid(self, form, formset):
+
+        # formset.saveでインスタンスを取得できるように、既存データに変更が無くても更新対象となるようにする
+        for detail_form in formset.forms:
+            if detail_form.cleaned_data:
+                detail_form.has_changed = lambda: True
+
+        # インスタンスの取得
+        invoice = form.save(commit=False)
+        formset.instance = invoice
+        details = formset.save(commit=False)
+
+        sub_total = 0
+
+        # 明細に単価と合計を設定
+        for detail in details:
+            detail.unit_price = detail.item.unit_price
+            detail.amount = detail.unit_price * detail.quantity
+            sub_total += detail.amount
+
+        # 見出しに小計、消費税、合計、担当者を設定
+        tax = round(sub_total * 0.08)
+        total_amount = sub_total + tax
+
+        invoice.sub_total = sub_total
+        invoice.tax = tax
+        invoice.total_amount = total_amount
+        invoice.created_by = self.request.user
+
+        # DB更新
+        with transaction.atomic():
+            invoice.save()
+            formset.instance = invoice
+            formset.save()
+
+        # 処理後は詳細ページを表示
+        return redirect(invoice.get_absolute_url())
+
+
+class InvoiceCreateView(LoginRequiredMixin, InvoiceMixin, FormsetMixin, CreateView):
+    template_name = 'invoice/invoice_form.html'
+    model = Invoice
+    form_class = InvoiceForm
+    formset_class = InvoiceDetailFormSet
+
+
+class InvoiceUpdateView(LoginRequiredMixin, InvoiceMixin, FormsetMixin, UpdateView):
+    is_update_view = True
+    template_name = 'invoice/invoice_form.html'
+    model = Invoice
+    form_class = InvoiceForm
+    formset_class = InvoiceDetailFormSet
+
+InvoiceMixinは新規登録、更新を行う共通処理です。
+
+
+        for detail_form in formset.forms:
+            if detail_form.cleaned_data:
+                detail_form.has_changed = lambda: True
+
+上記のコードの意味について説明します。２点前提知識があります。
+
+１．フォームの保存時にデータを追加する方法
+
+Djangoでは、入力フォームに無い情報、つまりログインユーザーや他モデルからの引用値、計算値を登録する場合、まずinstance = form.save(commit=False)というコードでモデルのインスタンスを取得し、instance に対して情報を追加したあとで改めてinstance.save()でDBに保存するという手順を踏むのが一般的です。これはformset.saveでも同様です。
+
+２．Formsetのデータ更新処理の動作
+
+formset.saveでデータ更新時に処理の対象となるのは、新規データのフォーム、およびデータ更新のあったフォームだけです。空のフォーム、データ更新のなかったフォームについては無視されます。
+
+今回の登録、更新処理では内部的に以下の処理を行います。
+
+１．明細行のデータに単価と合計を入れる。
+２．見出し行に小計、消費税、合計と担当者IDを入れる
+
+標準の動作だと、変更のない既存データはformset.save(commit=False)で取得されるインスタンスに含まれません。フォームの入力値はcleared_dataにも含まれるので集計処理はできなくもないですが、コードが複雑になり新規と更新で処理を共通化することもできません。
+そのため、フォームに変更があったか判定する「has_changed」というメソッドに手を入れ、常に変更があったとみなさせて全行のインスタンスを得るようにしました。
+
+手順９．テンプレート作成
+前回分
+
+他の部分は前回と同じなので入力フォームのみ解説します。
+
+invoice_form.html
+
+{% extends "./_base.html" %}
+{% load bootstrap4 %}
+
+{% block content %}
+    {{ form.certifications.errors }}
+    <div class="container">
+        <div class="row">
+            <div class="col-sm-8 offset-sm-2">
+                <h2 class="text-center">注文登録</h2>
+                <div class="clearfix">
+                    <div class="float-right mt-3 mb-3">
+                        {% if object %}
+                            <a class="btn btn-outline-secondary command" href="{% url 'detail' invoice.pk %}">戻る</a>
+                        {% else %}
+                            <a class="btn btn-outline-secondary command" href="{% url 'index' %}">戻る</a>
+                        {% endif %}
+                        <a class="btn btn-outline-secondary command save" href="#">登録</a>
+                    </div>
+                </div>
+                <div>
+                    {% bootstrap_formset_errors formset %}
+                </div>
+                <form method="post" class="form" id="myform">
+                    {% csrf_token %}
+                    {{ formset.management_form }}
+                    {% bootstrap_field form.customer show_label=False %}
+                    <div>
+                        <table class="table table-striped">
+                            <tbody class="invoicedetail">
+                            {% for form in formset %}
+                                <tr>
+                                    <td class="align-middle rownum"></td>
+                                    <td>
+                                        {% bootstrap_field form.id show_label=False %}
+                                        {% bootstrap_field form.item show_label=False %}
+                                        {% bootstrap_field form.quantity show_label=False %}
+                                        {% bootstrap_field form.DELETE show_label=False field_class="float-right" %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <a href="#" class="btn btn-outline-secondary add-invoicedetail col-12">行を追加</a>
+                </form>
+                <div class="float-right mt-3 mb-3">
+                    {% if object %}
+                        <a class="btn btn-outline-secondary command" href="{% url 'detail' invoice.pk %}">戻る</a>
+                    {% else %}
+                        <a class="btn btn-outline-secondary command" href="{% url 'index' %}">戻る</a>
+                    {% endif %}
+                    <a class="btn btn-outline-secondary command save" href="#">登録</a>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block bottom_script %}
+    <script type="text/html" id="invoicedetail-template">
+        <tr id="invoicedetail-__prefix__">
+            <td class="align-middle rownum"></td>
+            <td>
+                {% bootstrap_field formset.empty_form.item show_label=False %}
+                {% bootstrap_field formset.empty_form.quantity show_label=False %}
+                {% bootstrap_field formset.empty_form.DELETE show_label=False field_class="float-right" %}
+            </td>
+        </tr>
+    </script>
+    <script>
+        $(function () {
+            $('.add-invoicedetail').click(function (e) {
+                e.preventDefault();
+                var count = parseInt($('#id_invoicedetail_set-TOTAL_FORMS').attr('value'), 10);
+                var tmplMarkup = $('#invoicedetail-template').html();
+                var compiledTmpl = tmplMarkup.replace(/__prefix__/g, count)
+                console.log(compiledTmpl);
+                $('tbody.invoicedetail').append(compiledTmpl);
+                $('#id_invoicedetail_set-TOTAL_FORMS').attr('value', count + 1);
+            });
+        });
+    </script>
+{% endblock bottom_script %}
+
+タグの説明
+{% bootstrap_formset_errors formset %}
+
+formsetで特定のフィールドに属しないエラーを表示します。今回は明細が１行も入力されていない場合にエラーが出ます。
+{{ formset.management_form }}
+
+formsetを管理する情報を出力します。現在の表示行数、最低・最大入力行などです。
+{% bootstrap_field formset.empty_form.DELETE show_label=False field_class="float-right" %}
+
+formsetの各フォームには「削除」チェックボックスが自動的に追加されます。 ここをチェックすると、新規登録時は行を無視、更新時は該当行データの削除がおこなれます。
+JavaScript Jquery部分
+
+「行を追加」ボタンの押下時の処理です。フォームの追加表示と管理データを連動して更新するとJavaScriptからでも空欄行の追加が可能です。
